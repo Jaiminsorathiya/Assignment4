@@ -6,7 +6,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix
 
 # ---------------------------------------------------
-# 1) Data generation
+# 1) Generate the synthetic dataset (two noisy concentric rings)
 # ---------------------------------------------------
 def generate_data_per_class(n_samples, r, sigma, label, rng):
     theta = rng.uniform(-np.pi, np.pi, n_samples)
@@ -48,23 +48,21 @@ X_train, y_train, X_test, y_test = generate_dataset()
 print("Train:", X_train.shape, " Test:", X_test.shape)
 
 # ---------------------------------------------------
-# 2) Cross-validation setup
+# 2) CV setup and hyperparameter grids
 # ---------------------------------------------------
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
 
-# Hyperparameter grids
 C_values = [0.1, 1, 10, 100, 1000]
 gamma_values = [0.01, 0.1, 1, 10]
 
 hidden_sizes = [5, 10, 20, 40, 60, 80, 100]
 alphas = [1e-4, 1e-3, 1e-2]
 
-# For plots
-svm_cv_matrix = np.zeros((len(C_values), len(gamma_values)))   # CV acc for each (C, gamma)
-mlp_cv_per_hidden = []                                         # best CV acc per hidden size
+svm_cv_matrix = np.zeros((len(C_values), len(gamma_values)))
+mlp_cv_per_hidden = []
 
 # ---------------------------------------------------
-# 3) SVM: cross-validation over C, gamma
+# 3) SVM CV
 # ---------------------------------------------------
 def cv_score_svm(C, gamma):
     accs = []
@@ -92,7 +90,6 @@ C_best, gamma_best = best_svm_params
 print(f"\nBest SVM params: C={C_best}, gamma={gamma_best}, "
       f"CV accuracy={best_svm_acc:.4f}, CV error={1-best_svm_acc:.4f}")
 
-# Train final SVM on all training data
 svm_final = SVC(kernel="rbf", C=C_best, gamma=gamma_best)
 svm_final.fit(X_train, y_train)
 
@@ -108,7 +105,7 @@ print("Confusion matrix [rows: true (-1,+1), cols: predicted (-1,+1)]:")
 print(svm_cm)
 
 # ---------------------------------------------------
-# 4) MLP: cross-validation over hidden layer size & alpha
+# 4) MLP CV
 # ---------------------------------------------------
 def cv_score_mlp(h, alpha):
     accs = []
@@ -146,7 +143,6 @@ h_best, alpha_best = best_mlp_params
 print(f"\nBest MLP params: hidden={h_best}, alpha={alpha_best}, "
       f"CV accuracy={best_mlp_acc:.4f}, CV error={1-best_mlp_acc:.4f}")
 
-# Train final MLP
 mlp_final = MLPClassifier(
     hidden_layer_sizes=(h_best,),
     activation="tanh",
@@ -169,41 +165,46 @@ print("Confusion matrix [rows: true (-1,+1), cols: predicted (-1,+1)]:")
 print(mlp_cm)
 
 # ---------------------------------------------------
-# 5) Create 2x2 figure with all graphs
+# 5) FOUR SEPARATE FIGURES (one plot each)
 # ---------------------------------------------------
-fig, axes = plt.subplots(2, 2, figsize=(14, 12))
 
-# 5.1 SVM hyperparameter heatmap (top-left)
-ax0 = axes[0, 0]
-im = ax0.imshow(svm_cv_matrix,
-                origin='lower',
-                aspect='auto',
-                extent=[min(gamma_values), max(gamma_values),
-                        min(C_values), max(C_values)],
-                cmap='viridis')
-ax0.set_xscale('log')
-ax0.set_yscale('log')
-ax0.set_xlabel('Gamma')
-ax0.set_ylabel('C')
-ax0.set_title('SVM Hyperparameter Selection (Accuracy)')
-cbar = fig.colorbar(im, ax=ax0)
+# 5.1 SVM CV heatmap
+plt.figure(figsize=(6, 5))
+im = plt.imshow(
+    svm_cv_matrix,
+    origin='lower',
+    aspect='auto',
+    extent=[min(gamma_values), max(gamma_values),
+            min(C_values), max(C_values)],
+    cmap='viridis'
+)
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('Gamma')
+plt.ylabel('C')
+plt.title('SVM Hyperparameter Selection (Accuracy)')
+cbar = plt.colorbar(im)
 cbar.set_label('CV Mean Accuracy')
+plt.xticks(gamma_values)
+plt.gca().get_xaxis().set_major_formatter(plt.ScalarFormatter())
+plt.yticks(C_values)
+plt.gca().get_yaxis().set_major_formatter(plt.ScalarFormatter())
+plt.tight_layout()
+plt.savefig('svm_cv_heatmap.png', dpi=300)
+plt.show()
 
-# If you want ticks exactly at your grid values:
-ax0.set_xticks(gamma_values)
-ax0.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-ax0.set_yticks(C_values)
-ax0.get_yaxis().set_major_formatter(plt.ScalarFormatter())
+# 5.2 MLP CV curve
+plt.figure(figsize=(6, 5))
+plt.plot(hidden_sizes, mlp_cv_per_hidden, marker='o')
+plt.xlabel('Number of Hidden Neurons')
+plt.ylabel('CV Mean Accuracy')
+plt.title('MLP Hyperparameter Selection')
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('mlp_cv_curve.png', dpi=300)
+plt.show()
 
-# 5.2 MLP CV accuracy vs hidden units (top-right)
-ax1 = axes[0, 1]
-ax1.plot(hidden_sizes, mlp_cv_per_hidden, marker='o')
-ax1.set_xlabel('Number of Hidden Neurons')
-ax1.set_ylabel('CV Mean Accuracy')
-ax1.set_title('MLP Hyperparameter Selection')
-ax1.grid(True)
-
-# 5.3 Decision boundaries: prepare grid
+# Prepare grid for decision boundaries (shared by both models)
 x_min, x_max = X_train[:, 0].min() - 2, X_train[:, 0].max() + 2
 y_min, y_max = X_train[:, 1].min() - 2, X_train[:, 1].max() + 2
 xx, yy = np.meshgrid(
@@ -212,33 +213,36 @@ xx, yy = np.meshgrid(
 )
 grid = np.c_[xx.ravel(), yy.ravel()]
 
-# 5.3 SVM decision boundary (bottom-left)
-ax2 = axes[1, 0]
+# 5.3 SVM decision boundary
+plt.figure(figsize=(6, 6))
 Z_svm = svm_final.predict(grid).reshape(xx.shape)
-ax2.contourf(xx, yy, Z_svm, alpha=0.3, levels=[-1, 0, 1], cmap='coolwarm')
-ax2.scatter(X_train[y_train == -1, 0], X_train[y_train == -1, 1],
+plt.contourf(xx, yy, Z_svm, alpha=0.3, levels=[-1, 0, 1], cmap='coolwarm')
+plt.scatter(X_train[y_train == -1, 0], X_train[y_train == -1, 1],
             s=15, edgecolor='k', facecolor='C0', alpha=0.7, label='class -1')
-ax2.scatter(X_train[y_train == 1, 0], X_train[y_train == 1, 1],
+plt.scatter(X_train[y_train == 1, 0], X_train[y_train == 1, 1],
             s=15, edgecolor='k', facecolor='C1', alpha=0.7, label='class +1')
-ax2.set_title(f'SVM Optimal Boundary\nP(Error)={svm_test_err:.4f}')
-ax2.set_xlim(x_min, x_max)
-ax2.set_ylim(y_min, y_max)
-ax2.set_aspect('equal', 'box')
-ax2.legend(loc='upper right')
-
-# 5.4 MLP decision boundary (bottom-right)
-ax3 = axes[1, 1]
-Z_mlp = mlp_final.predict(grid).reshape(xx.shape)
-ax3.contourf(xx, yy, Z_mlp, alpha=0.3, levels=[-1, 0, 1], cmap='coolwarm')
-ax3.scatter(X_train[y_train == -1, 0], X_train[y_train == -1, 1],
-            s=15, edgecolor='k', facecolor='C0', alpha=0.7, label='class -1')
-ax3.scatter(X_train[y_train == 1, 0], X_train[y_train == 1, 1],
-            s=15, edgecolor='k', facecolor='C1', alpha=0.7, label='class +1')
-ax3.set_title(f'MLP Optimal Boundary\nP(Error)={mlp_test_err:.4f}')
-ax3.set_xlim(x_min, x_max)
-ax3.set_ylim(y_min, y_max)
-ax3.set_aspect('equal', 'box')
-ax3.legend(loc='upper right')
-
+plt.title(f'SVM Optimal Boundary\nP(Error)={svm_test_err:.4f}')
+plt.xlim(x_min, x_max)
+plt.ylim(y_min, y_max)
+plt.gca().set_aspect('equal', 'box')
+plt.legend(loc='upper right')
 plt.tight_layout()
+plt.savefig('svm_decision_boundary.png', dpi=300)
+plt.show()
+
+# 5.4 MLP decision boundary
+plt.figure(figsize=(6, 6))
+Z_mlp = mlp_final.predict(grid).reshape(xx.shape)
+plt.contourf(xx, yy, Z_mlp, alpha=0.3, levels=[-1, 0, 1], cmap='coolwarm')
+plt.scatter(X_train[y_train == -1, 0], X_train[y_train == -1, 1],
+            s=15, edgecolor='k', facecolor='C0', alpha=0.7, label='class -1')
+plt.scatter(X_train[y_train == 1, 0], X_train[y_train == 1, 1],
+            s=15, edgecolor='k', facecolor='C1', alpha=0.7, label='class +1')
+plt.title(f'MLP Optimal Boundary\nP(Error)={mlp_test_err:.4f}')
+plt.xlim(x_min, x_max)
+plt.ylim(y_min, y_max)
+plt.gca().set_aspect('equal', 'box')
+plt.legend(loc='upper right')
+plt.tight_layout()
+plt.savefig('mlp_decision_boundary.png', dpi=300)
 plt.show()
